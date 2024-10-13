@@ -2,20 +2,38 @@
 /// Provided as is, no warranty, no guarantee of functionality, use at your own risk
 
 #include <Arduino.h>
-
-#define LIDAR0 Serial1
-#define LIDAR1 Serial2
-#define LIDAR2 Serial3
-#define LIDAR3 Serial4
+#include <math.h>
 
 #define MIN_INTENSITY 150
-#define MIN_DISTANCE 50
-#define MAX_DISTANCE 2000
-
-HardwareSerial* lidars[] = { &LIDAR0, &LIDAR1, &LIDAR2, &LIDAR3 };
+#define MIN_DISTANCE 100    // in millimeters
+#define MAX_DISTANCE 2500   // in millimeters
 
 #define POINT_PER_PACK 12
 #define HEADER 0x54
+
+typedef struct __attribute__((packed)) 
+{
+  float x_offset;           // in millimeters from the reference point
+  float y_offset;           // in millimeters from the reference point
+  float angle_offset;          // in degrees as that's what the lidar outputs and this maintains consistency
+  HardwareSerial* serial;      // A pointer to the serial port that the lidar is connected to
+  uint8_t motor_pin;           // The pin that the motor controller is connected to, if used
+} LidarDeviceStructDef;
+
+LidarDeviceStructDef lidarDevices[] = {
+  {  0,  81,   0, &Serial1, -1},
+  { 80,   0,  90, &Serial2, -1},
+  {  0, -81, 180, &Serial3, -1},
+  {-80,   0, 270, &Serial4, -1}
+};
+
+typedef struct __attribute__((packed)) 
+{
+  float x;           // distance in millimeters from the reference point
+  float y;           // distance in millimeters from the reference point
+  uint8_t intensity;    // value of the intensity of the return
+  uint8_t id;           // the ID of the lidar that the point came from
+} PositionStructDef;
 
 typedef struct __attribute__((packed)) 
 {
@@ -76,13 +94,14 @@ void ReadLidar(int lidarNum);
 
 void setup() {
   Serial.begin(5000000);  
-  lidars[0]->begin(230400, SERIAL_8N1);
-  lidars[1]->begin(230400, SERIAL_8N1);
-  lidars[2]->begin(230400, SERIAL_8N1);
-  lidars[3]->begin(230400, SERIAL_8N1);
+  lidarDevices[0].serial->begin(230400, SERIAL_8N1);
+  lidarDevices[1].serial->begin(230400, SERIAL_8N1);
+  lidarDevices[2].serial->begin(230400, SERIAL_8N1);
+  lidarDevices[3].serial->begin(230400, SERIAL_8N1);
 }
 
 byte lidarFrameBuffer[57];
+float deg2rad = 3.14159265359 / 180.0;
 
 void loop() {
   ReadLidar(0);
@@ -93,38 +112,70 @@ void loop() {
 
 void ReadLidar(int lidarNum)
 {
-  while(lidars[lidarNum]->available() > 0)
+  while(lidarDevices[lidarNum].serial->available() > 0)
   {
-    char c = lidars[lidarNum]->read();
+    char c = lidarDevices[lidarNum].serial->read();
     if(c == HEADER) 
     {
       lidarFrameBuffer[0] = c;
-      while(lidars[lidarNum]->available() < 56);
+      while(lidarDevices[lidarNum].serial->available() < 56);
       {
-        lidars[lidarNum]->readBytes(&lidarFrameBuffer[1], 56);
+        lidarDevices[lidarNum].serial->readBytes(&lidarFrameBuffer[1], 56);
         memcpy(&lidarFrame, lidarFrameBuffer, sizeof(lidarFrame));
       }
-
       
       uint8_t crc = CalCRC8((uint8_t*)&lidarFrame, sizeof(lidarFrame) - 1);
       
       if(crc == lidarFrame.crc8)
       {
-        float start_angle = (float)lidarFrame.start_angle / 100;
-        float end_angle = (float)lidarFrame.end_angle / 100;
-        float angle_diff = (end_angle - start_angle) / (POINT_PER_PACK - 1);
+        float start_angle = ((float)lidarFrame.start_angle / 100);
+        float end_angle   = ((float)lidarFrame.end_angle / 100);
+        float angle_diff  = (end_angle - start_angle) / (POINT_PER_PACK - 1);
         
         for(int i = 0; i < POINT_PER_PACK; i++)
         {
+          PositionStructDef point;
+          float angle = (start_angle + (i * angle_diff));
+          float angleAdjustedForLidarRotation = angle + lidarDevices[lidarNum].angle_offset;
+          float radians = angleAdjustedForLidarRotation * deg2rad;
+          float adjustedRadian = radians - (PI/2);    // This is adjusting to match polar coordinates
 
-          Serial.print(lidarNum);
-          Serial.print(", ");
-          Serial.print(start_angle + i * angle_diff);
-          Serial.print(", ");
-          Serial.print(lidarFrame.point[i].distance/1000.0f);
-          Serial.print(", ");
-          Serial.print(lidarFrame.point[i].intensity);
-          Serial.println();
+          // // Ignore message if the angle is between 180 and 270 degrees
+          // if(angle > 180 && angle < 270)
+          // {
+          //   continue;
+          // }
+
+          point.x = -(cosf(adjustedRadian)) * lidarFrame.point[i].distance;
+          point.y =  (sinf(adjustedRadian)) * lidarFrame.point[i].distance;
+          point.intensity = lidarFrame.point[i].intensity;
+          point.id = lidarNum;
+
+          // Output the point data
+          // Serial.print(lidarNum);
+          // Serial.print(", ");
+          // Serial.print(start_angle + i * angle_diff);
+          // Serial.print(", ");
+          // Serial.print(lidarFrame.point[i].distance);
+          // Serial.print(", ");
+          // Serial.print(lidarFrame.point[i].intensity);
+          // Serial.println();
+          
+          if(lidarFrame.point[i].distance > MIN_DISTANCE && lidarFrame.point[i].distance < MAX_DISTANCE && lidarFrame.point[i].intensity > MIN_INTENSITY)
+          {            
+            Serial.print(point.id);
+            Serial.print(",");
+            Serial.print(angle);
+            Serial.print(",");
+            Serial.print(lidarFrame.point[i].distance);
+            Serial.print(",");
+            Serial.print(point.x);
+            Serial.print(",");
+            Serial.print(point.y);
+            Serial.print(",");
+            Serial.print(point.intensity);
+            Serial.println();
+          }
         }
       }
       else

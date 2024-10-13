@@ -25,4 +25,12 @@ Pinout courtesy of [PJRC](https://www.pjrc.com/teensy/pinout.html)
 
 Communications protocol data taken from [this datasheet](https://www.elecrow.com/download/product/SLD06360F/LD19_Development%20Manual_V2.3.pdf).
 
+Notes on Coordinate Systems 
+==
+It seems that the LIDAR sensor has it's zero angle pointing forwards and it rotates clockwise. It also seems that mathematical equations assume that the zero angle is in line with +x and the angle sweeps anti-clockwise! The code on the Teensy needs to take this in to account.
+
+[Info here](https://math.stackexchange.com/questions/2653099/calculate-cartesian-coordinates-based-on-the-distance-and-the-angle)
+
+Currently this is outputting both raw data and the calculated x, y coordinates. The maths is a bit dicey and I coded this late at night so needs looking at with less tired eyes.
+
 This is provided as-is purely as an example, with no warranty, and used at your own risk.
